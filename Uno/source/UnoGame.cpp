@@ -1,3 +1,9 @@
+#include <iostream>
+#include <algorithm>
+#include <limits>
+#include <sstream>
+#include <exception>
+#include <stdexcept>
 #include "../header/UnoGame.h"
 #include "../header/Player.h"
 #include "../header/Card.h"
@@ -6,36 +12,68 @@
 #include "../header/WildCard.h"
 #include "../header/DrawFourCard.h"
 #include "../header/CardUtils.h"
-#include <iostream>
-#include <algorithm>
-#include <limits> 
-#include <sstream>
+#include "../header/Exceptions.h"
 
 UnoGame::UnoGame()
-    : topCard(nullptr), currentPlayerIndex(0), isReverse(false), cardsDrawn(0) {
+    : topCard(nullptr), currentPlayerIndex(0), isReverse(false), cardsDrawn(0), gameEnded(false), 
+      pendingReverseEffect(false), pendingSkipEffect(false) {
 }
 
 void UnoGame::addPlayer(Player* player) {
+    // Check for null player pointer before adding
+    if (!player) {
+        throw Uno::NullPointerException("player");
+    }
     players.push_back(player);
 }
 
 void UnoGame::startGame() {
-    deck.initializeDeck();
-    deck.shuffleDeck();
+    // Ensure there are players before starting the game
+    if (players.empty()) {
+        throw Uno::GameStateException("Cannot start game with no players");
+    }
     
+    // Initialize and shuffle the deck
+    try {
+        deck.initializeDeck();
+        deck.shuffleDeck();
+    } catch (const std::exception& e) {
+        throw Uno::ResourceException(std::string("Failed to initialize or shuffle deck: ") + e.what());
+    }
+    
+    // Each player draws 7 cards at the start
     for (auto& player : players) {
-        for (int i = 0; i < 7; ++i) {  // Each player draws 7 cards at the start
-            player->drawCard(deck);
+        // Check for null player pointer in the list
+        if (!player) {
+            throw Uno::NullPointerException("player in players list");
+        }
+        for (int i = 0; i < 7; ++i) {
+            try {
+                player->drawCard(deck);
+            } catch (const std::exception& e) {
+                throw Uno::PlayerException(std::string("Failed for player to draw initial cards: ") + e.what());
+            }
         }
     }
     
     // Draw the first card to start the game
-    topCard = deck.drawCard();
+    try {
+        topCard = deck.drawCard();
+        if (!topCard) {
+            throw Uno::CardException("Failed to draw initial top card from deck");
+        }
+    } catch (const std::exception& e) {
+        throw Uno::CardException(std::string("Error drawing initial top card: ") + e.what());
+    }
     
     // If the first card is a special card, handle it
     if (dynamic_cast<WildCard*>(topCard) || dynamic_cast<DrawFourCard*>(topCard)) {
         // If it's a wild card, set a random color
-        topCard->setColor(static_cast<CardColor>(rand() % 4));
+        try {
+            topCard->setColor(static_cast<CardColor>(rand() % 4));
+        } catch (const std::exception& e) {
+            throw Uno::CardException(std::string("Failed to set color for initial wild card: ") + e.what());
+        }
     }
     
     std::cout << "Game Started! Top card is: ";
@@ -44,6 +82,12 @@ void UnoGame::startGame() {
 }
 
 void UnoGame::nextTurn() {
+    // Ensure there are players to advance turns
+    if (players.empty()) {
+        throw Uno::GameStateException("Cannot advance turns with no players");
+    }
+    
+    // Calculate the next player index based on game direction
     if (isReverse) {
         currentPlayerIndex--;
         if (currentPlayerIndex < 0) {
@@ -58,6 +102,12 @@ void UnoGame::nextTurn() {
 }
 
 int UnoGame::nextPlayerIndex() const {
+    // Ensure there are players to determine the next player
+    if (players.empty()) {
+        throw Uno::GameStateException("Cannot determine next player with no players");
+    }
+    
+    // Calculate the next player index without changing the current player
     int nextIdx = currentPlayerIndex;
     if (isReverse) {
         nextIdx--;
@@ -70,19 +120,27 @@ int UnoGame::nextPlayerIndex() const {
 }
 
 void UnoGame::playTurn() {
-    Player* currentPlayer = players[currentPlayerIndex];
+    Player* currentPlayer = getCurrentPlayer();
+    // Ensure the current player is valid
+    if (!currentPlayer) {
+        throw Uno::PlayerException("Current player is null");
+    }
 
-    if (currentPlayer->hasWon()) return;
+    if (currentPlayer->hasWon()) return; // If player has already won, skip turn
 
     std::cout << "\n-- " << currentPlayer->getName() << "'s turn --" << std::endl;
     std::cout << "Top card: ";
+    // Ensure the top card is valid
+    if (!topCard) {
+        throw Uno::CardException("Top card is null during play turn");
+    }
     topCard->print();
     std::cout << std::endl;
 
     std::cout << "Has the device been passed to the next player? Press any key to continue..." << std::endl;
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // Clear input buffer
 
-    currentPlayer->displayHand();
+    currentPlayer->displayHand(); // Display current player's hand
 
     int choice;
     bool validChoice = false;
@@ -103,131 +161,242 @@ void UnoGame::playTurn() {
         }
 
         if (choice == -2) {
-            currentPlayer->callUNO();
+            currentPlayer->callUNO(); // Player calls UNO
             continue; // Let them choose again
         }
 
         if (choice == -1) {
             std::cout << currentPlayer->getName() << " draws a card." << std::endl;
-            drawCard(currentPlayer);
-            validChoice = true;
-        } else if (choice >= 0 && choice < currentPlayer->getHandSize()) {
-            Card* selectedCard = currentPlayer->getCardAtIndex(choice);
-
-            if (isCardPlayable(selectedCard)) {
-                currentPlayer->playCard(choice, *this);
+            try {
+                drawCard(currentPlayer); // Player draws a card
                 validChoice = true;
-                enforceUNOCall(currentPlayer);
-
-                if (currentPlayer->hasWon()) {
-                    std::cout << "\n*** " << currentPlayer->getName() << " wins! ***" << std::endl;
-                    gameEnded = true;
-                    return;
+            } catch (const Uno::CardException& e) {
+                std::cout << "Error drawing card: " << e.what() << std::endl;
+                std::cout << "Trying to continue the game..." << std::endl;
+            } catch (const Uno::GameStateException& e) {
+                std::cout << "Game state error during draw: " << e.what() << std::endl;
+                std::cout << "Trying to continue the game..." << std::endl;
+            }
+        } else if (choice >= 0 && choice < currentPlayer->getHandSize()) {
+            try {
+                Card* selectedCard = currentPlayer->getCardAtIndex(choice);
+                // Ensure the selected card is valid
+                if (!selectedCard) {
+                    throw Uno::CardException("Selected card is null");
                 }
-            } else {
-                std::cout << "That card cannot be played on the current top card. Please select a valid card or draw." << std::endl;
+
+                if (isCardPlayable(selectedCard)) {
+                    currentPlayer->playCard(choice, *this); // Player plays the selected card
+                    validChoice = true;
+                    enforceUNOCall(currentPlayer); // Enforce UNO call rules
+
+                    if (currentPlayer->hasWon()) {
+                        std::cout << "\n*** " << currentPlayer->getName() << " wins! ***" << std::endl;
+                        gameEnded = true;
+                        return;
+                    }
+                } else {
+                    std::cout << "That card cannot be played on the current top card. Please select a valid card or draw." << std::endl;
+                }
+            } catch (const Uno::CardException& e) {
+                std::cout << "Card Error: " << e.what() << std::endl;
+            } catch (const Uno::PlayerException& e) {
+                std::cout << "Player Error: " << e.what() << std::endl;
+            } catch (const Uno::GameStateException& e) {
+                std::cout << "Game State Error: " << e.what() << std::endl;
+            } catch (const Uno::InvalidInputException& e) {
+                std::cout << "Input Error: " << e.what() << std::endl;
             }
         } else {
             std::cout << "Invalid choice! Please select a valid card or draw." << std::endl;
         }
     }
 
-    nextTurn();
+    nextTurn(); // Advance to the next turn
 }
 
-
-
 void UnoGame::drawCard(Player* player) {
-    player->drawCard(deck);
-    std::cout << player->getName() << " drew a card." << std::endl;
+    // Ensure player is not null
+    if (!player) {
+        throw Uno::NullPointerException("player");
+    }
     
-    // Check if player now has 21 or more cards after drawing
-    if (player->getHandSize() >= 21) {
-        std::cout << player->getName() << " has 21 or more cards and is eliminated!" << std::endl;
-        eliminatePlayer(player);
+    try {
+        player->drawCard(deck); // Player draws a card from the deck
+        std::cout << player->getName() << " drew a card." << std::endl;
+        
+        // Check if player now has 21 or more cards after drawing
+        if (player->getHandSize() >= 21) {
+            std::cout << player->getName() << " has 21 or more cards and is eliminated!" << std::endl;
+            eliminatePlayer(player); // Eliminate player if they have too many cards
+        }
+    } catch (const std::exception& e) {
+        throw Uno::CardException(std::string("Failed to draw card for player: ") + e.what());
     }
 }
 
-
 void UnoGame::skipTurn() {
-    std::cout << "Skipping " << players[nextPlayerIndex()]->getName() << "'s turn!" << std::endl;
-    nextTurn();
+    try {
+        int nextIdx = nextPlayerIndex(); // Get the index of the next player
+        // Validate the next player index
+        if (nextIdx < 0 || nextIdx >= players.size()) {
+            throw Uno::GameStateException("Next player index out of bounds during skip turn");
+        }
+        
+        std::cout << "Skipping " << players[nextIdx]->getName() << "'s turn!" << std::endl;
+        nextTurn(); // Advance turn to skip the player
+    } catch (const std::exception& e) {
+        throw Uno::GameStateException(std::string("Failed to skip turn: ") + e.what());
+    }
 }
 
 void UnoGame::reverseDirection() {
-    isReverse = !isReverse;
+    isReverse = !isReverse; // Toggle the game direction
     std::cout << "Game direction reversed!" << std::endl;
 }
 
 void UnoGame::makeNextPlayerDraw(int numCards) {
-    int nextPlayerIdx = nextPlayerIndex();
-    
-    Player* nextPlayer = players[nextPlayerIdx];
-    std::cout << nextPlayer->getName() << " must draw " << numCards << " cards!" << std::endl;
-    
-    for (int i = 0; i < numCards; ++i) {
-        nextPlayer->drawCard(deck);
+    // Validate number of cards to draw
+    if (numCards <= 0) {
+        throw Uno::InvalidInputException("Number of cards to draw must be positive");
     }
     
-    // Check if player now has 21 or more cards after drawing multiple cards
-    if (nextPlayer->getHandSize() >= 21) {
-        std::cout << nextPlayer->getName() << " has 21 or more cards and is eliminated!" << std::endl;
-        eliminatePlayer(nextPlayer);
+    try {
+        int nextPlayerIdx = nextPlayerIndex(); // Get the index of the next player
+        
+        // Validate the next player index
+        if (nextPlayerIdx < 0 || nextPlayerIdx >= players.size()) {
+            throw Uno::GameStateException("Next player index out of bounds when making player draw");
+        }
+        
+        Player* nextPlayer = players[nextPlayerIdx];
+        // Ensure the next player is not null
+        if (!nextPlayer) {
+            throw Uno::NullPointerException("next player");
+        }
+        
+        std::cout << nextPlayer->getName() << " must draw " << numCards << " cards!" << std::endl;
+        
+        for (int i = 0; i < numCards; ++i) {
+            nextPlayer->drawCard(deck); // Next player draws cards
+        }
+        
+        // Check if player now has 21 or more cards after drawing multiple cards
+        if (nextPlayer->getHandSize() >= 21) {
+            std::cout << nextPlayer->getName() << " has 21 or more cards and is eliminated!" << std::endl;
+            eliminatePlayer(nextPlayer); // Eliminate player if they have too many cards
+        }
+    } catch (const std::exception& e) {
+        throw Uno::GameStateException(std::string("Failed to make next player draw cards: ") + e.what());
     }
 }
 
-
-
 void UnoGame::dropCardFromPlayer(Player* player, int index) {
-    if (index >= 0 && index < player->getHandSize()) {
+    // Ensure player is not null
+    if (!player) {
+        throw Uno::NullPointerException("player");
+    }
+    
+    // Validate card index
+    if (index < 0 || index >= player->getHandSize()) {
+        throw Uno::InvalidInputException("Card index out of bounds for dropping card");
+    }
+    
+    try {
         Card* cardToDrop = player->getCardAtIndex(index);
-        player->removeCardFromHand(index);
-        deck.placeInDiscard(cardToDrop);
+        // Ensure the card to drop is valid
+        if (!cardToDrop) {
+            throw Uno::CardException("Card to drop is null");
+        }
+        
+        player->removeCardFromHand(index); // Remove card from player's hand
+        deck.placeInDiscard(cardToDrop); // Place card in discard pile
+    } catch (const std::exception& e) {
+        throw Uno::CardException(std::string("Failed to drop card from player: ") + e.what());
     }
 }
 
 void UnoGame::eliminatePlayer(Player* player) {
+    // Ensure player is not null
+    if (!player) {
+        throw Uno::NullPointerException("player");
+    }
+    
     auto it = std::find(players.begin(), players.end(), player);
     if (it != players.end()) {
         std::cout << player->getName() << " has been eliminated from the game." << std::endl;
-        players.erase(it);
+        players.erase(it); // Remove player from the game
         
-        // Adjust currentPlayerIndex if needed
+        // Adjust currentPlayerIndex if needed after elimination
         if (currentPlayerIndex >= players.size()) {
             currentPlayerIndex = 0;
         }
+    } else {
+        throw Uno::PlayerException("Player not found in game for elimination");
     }
 }
 
 bool UnoGame::isGameOver() {
-    if (gameEnded) return true;
+    if (gameEnded) return true; // Game is over if explicitly ended
     for (auto& player : players) {
+        // Check for null player pointer during game over check
+        if (!player) {
+            throw Uno::NullPointerException("player in players list during game over check");
+        }
+        
         if (player->hasWon()) {
-            return true;
+            return true; // Game is over if any player has won
         }
     }
     return players.size() <= 1; // Game is also over if only one player remains
 }
 
 void UnoGame::enforceUNOCall(Player* player) {
+    // Ensure player is not null
+    if (!player) {
+        throw Uno::NullPointerException("player");
+    }
+    
     if (player->getHandSize() == 1 && !player->hasCalledUNOStatus()) {
         std::cout << player->getName() << " forgot to call UNO! Drawing 2 penalty cards." << std::endl;
         // Make the player draw two cards as penalty
-        for (int i = 0; i < 2; ++i) {
-            player->drawCard(deck);
+        try {
+            for (int i = 0; i < 2; ++i) {
+                player->drawCard(deck);
+            }
+        } catch (const std::exception& e) {
+            throw Uno::GameStateException(std::string("Failed to enforce UNO call penalty: ") + e.what());
         }
     }
 }
 
 bool UnoGame::isCardPlayable(Card* playedCard) {
-    return areCardsPlayable(playedCard, topCard);
+    // Ensure playedCard is not null
+    if (!playedCard) {
+        throw Uno::CardException("Cannot check if null card is playable");
+    }
+    
+    // Ensure topCard is not null
+    if (!topCard) {
+        throw Uno::CardException("Top card is null when checking card playability");
+    }
+    
+    return areCardsPlayable(playedCard, topCard); // Use utility function to check playability
 }
 
-
 void UnoGame::setTopCard(Card* card) {
+    // Ensure the card to set as top card is not null
+    if (!card) {
+        throw Uno::CardException("Cannot set null card as top card");
+    }
+    
     // Place the previous top card in the discard pile
     if (topCard) {
-        deck.placeInDiscard(topCard);
+        try {
+            deck.placeInDiscard(topCard);
+        } catch (const std::exception& e) {
+            throw Uno::CardException(std::string("Failed to place old top card in discard: ") + e.what());
+        }
     }
     
     // Set the new top card
@@ -235,75 +404,139 @@ void UnoGame::setTopCard(Card* card) {
 }
 
 Player* UnoGame::getCurrentPlayer() const {
-    if (currentPlayerIndex >= 0 && currentPlayerIndex < players.size()) {
-        return players[currentPlayerIndex];
+    // Ensure there are players to get the current player
+    if (players.empty()) {
+        throw Uno::GameStateException("Cannot get current player with no players");
     }
-    return nullptr;
+    
+    // Validate current player index
+    if (currentPlayerIndex < 0 || currentPlayerIndex >= players.size()) {
+        throw Uno::GameStateException("Current player index out of bounds");
+    }
+    
+    Player* player = players[currentPlayerIndex];
+    // Ensure the retrieved player is not null
+    if (!player) {
+        throw Uno::PlayerException("Current player is null");
+    }
+    
+    return player;
 }
 
 Card* UnoGame::getTopCard() const {
+    // Ensure top card is not null before returning
+    if (!topCard) {
+        throw Uno::CardException("Top card is null");
+    }
     return topCard;
 }
 
 void UnoGame::run() {
-    std::cout << "=== UNO GAME STARTED ===" << std::endl;
-    startGame();
-    
-    while (!isGameOver()) {
-        playTurn();
-    }
-    
-    // Find the winner
-    Player* winner = nullptr;
-    for (auto& player : players) {
-        if (player->hasWon()) {
-            winner = player;
-            break;
+    try {
+        std::cout << "=== UNO GAME STARTED ===" << std::endl;
+        startGame(); // Start the game
+        
+        while (!isGameOver()) {
+            try {
+                playTurn(); // Play a turn
+            } catch (const Uno::GameStateException& e) {
+                std::cout << "Game state error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on game state error
+            } catch (const Uno::PlayerException& e) {
+                std::cout << "Player error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on player error
+            } catch (const Uno::CardException& e) {
+                std::cout << "Card error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on card error
+            } catch (const Uno::InvalidInputException& e) {
+                std::cout << "Invalid input error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on invalid input error
+            } catch (const Uno::ResourceException& e) {
+                std::cout << "Resource error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on resource error
+            } catch (const std::exception& e) {
+                std::cout << "Unexpected error during turn: " << e.what() << std::endl;
+                std::cout << "Attempting to continue with next player..." << std::endl;
+                nextTurn(); // Advance to next player on any other unexpected error
+            }
         }
-    }
-    
-    if (winner) {
-        std::cout << "\n*** " << winner->getName() << " wins the game! ***" << std::endl;
-    } else if (players.size() == 1) {
-        std::cout << "\n*** " << players[0]->getName() << " is the last player standing and wins! ***" << std::endl;
-    } else {
-        std::cout << "\n*** Game over with no winner ***" << std::endl;
+        
+        // Find the winner after the game ends
+        Player* winner = nullptr;
+        for (auto& player : players) {
+            if (!player) continue; // Skip null players
+            if (player->hasWon()) {
+                winner = player;
+                break;
+            }
+        }
+        
+        if (winner) {
+            std::cout << "\n*** " << winner->getName() << " wins the game! ***" << std::endl;
+        } else if (players.size() == 1) {
+            std::cout << "\n*** " << players[0]->getName() << " is the last player standing and wins! ***" << std::endl;
+        } else {
+            std::cout << "\n*** Game over with no winner ***" << std::endl;
+        }
+    } catch (const Uno::UnoException& e) {
+        std::cout << "Fatal game error: " << e.what() << std::endl;
+        std::cout << "Game had to be terminated." << std::endl;
+    } catch (const std::exception& e) {
+        std::cout << "Unexpected fatal error: " << e.what() << std::endl;
+        std::cout << "Game had to be terminated." << std::endl;
     }
 }
 
 int UnoGame::getPlayerCount() const {
-    return players.size();
+    return players.size(); // Return current number of players
 }
 
 bool UnoGame::getIntegerInput(int& output) {
     std::string line;
-    std::getline(std::cin, line);
+    std::getline(std::cin, line); // Read a line of input
     std::stringstream ss(line);
+    // Attempt to parse integer and ensure no extra characters
     return (ss >> output) && ss.eof();
 }
 
 void UnoGame::applyPendingEffects() {
-    // Apply reverse effect if pending
+    // Apply reverse effect first if pending
     if (pendingReverseEffect) {
-        reverseDirection();
-        pendingReverseEffect = false;
+        try {
+            reverseDirection();
+            pendingReverseEffect = false;
+        } catch (const std::exception& e) {
+            throw Uno::GameStateException(std::string("Failed to apply reverse effect: ") + e.what());
+        }
     }
     
-    // Apply skip effect if pending
+    // Then apply skip effect if pending
     if (pendingSkipEffect) {
-        skipTurn(); // This will call nextTurn() internally
-        pendingSkipEffect = false;
+        try {
+            skipTurn(); // This will call nextTurn() internally
+            pendingSkipEffect = false;
+        } catch (const std::exception& e) {
+            throw Uno::GameStateException(std::string("Failed to apply skip effect: ") + e.what());
+        }
     }
 }
-
 
 UnoGame::~UnoGame() {
-    // Clean up the top card if it exists
+    // Clean up the top card if it exists to prevent memory leaks
     if (topCard) {
         delete topCard;
-    }
-     for (Player* p : players) {
-        delete p;
+        topCard = nullptr; // Set to nullptr after deletion
     }
     
+    // Clean up all players to prevent memory leaks
+    for (Player* p : players) {
+        delete p;
+    }
+    players.clear(); // Clear the player vector
 }
+
