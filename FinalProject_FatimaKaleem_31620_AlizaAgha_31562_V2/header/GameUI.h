@@ -32,7 +32,7 @@ private:
     bool selectingCardsToDrop; // Indicates if the player is selecting cards to drop
     std::vector<int> selectedCardIndices; // Stores indices of selected cards
 
-    static bool effectsApplied; // NEW: tracks if pending effects have been applied
+    bool effectsApplied; // tracks if pending effects have been applied
 
 public:
     GameUI();
