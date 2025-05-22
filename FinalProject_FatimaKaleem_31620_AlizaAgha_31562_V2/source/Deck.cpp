@@ -12,7 +12,7 @@
 #include <iostream>
 #include <ctime>
 #include <cstdlib>
-#include <algorithm>
+#include <algorithm> //std::shuflle
 #include <random>
 
 Deck::Deck() {}
@@ -95,7 +95,7 @@ Card* Deck::drawCard() {
         if (discardPile.empty()) {
             return nullptr; // No cards left in the game
         }
-        reshuffleDiscardIntoDeck();
+        reshuffleDiscardIntoDeck(); //saves the top and reshuffles the deck
     }
     
     Card* top = drawPile.top();
@@ -113,7 +113,7 @@ void Deck::placeInDiscard(Card* card) {
 
 void Deck::reshuffleDiscardIntoDeck() {
     // Save the top card of the discard pile
-    Card* topCard = nullptr;
+    Card* topCard = nullptr; //to avoid undefined behaviour
     if (!discardPile.empty()) {
         topCard = discardPile.top();
         discardPile.pop();
@@ -135,7 +135,7 @@ void Deck::reshuffleDiscardIntoDeck() {
 }
 
 void Deck::returnCardToDeck(Card* card) {
-    drawPile.push(card);
+    drawPile.push(card); //returns card to draw deck not used in code but made for scalability and further to expand the features
 }
 
 Card* Deck::getTopDiscard() const {
