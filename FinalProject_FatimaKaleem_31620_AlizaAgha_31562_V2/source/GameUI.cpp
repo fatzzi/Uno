@@ -16,7 +16,8 @@ GameUI::GameUI()
       cardDrawnThisTurn(false),   // Whether the current player has drawn a card this turn
       showContinueButton(false),  // Whether the "End Turn" button should be shown
       cardNeedingColorChoice(nullptr), // Tracks if a card requires a color to be chosen (Wild/DrawFour)
-      selectingCardsToDrop(false) // Tracks if the player is selecting cards to drop (for DropTwo card)
+      selectingCardsToDrop(false),// Tracks if the player is selecting cards to drop (for DropTwo card)
+    effectsApplied(false)
 {
     strcpy(statusMessage, ""); // Clear status message at initialization
     selectedCardIndices.clear(); // Clear selected card indices
@@ -387,15 +388,6 @@ bool GameUI::HandleGameScreen(UnoGame &game)
         try {
             game.applyPendingEffects();
             effectsApplied = true;
-
-            // The hasPendingSkipEffect method is commented out in UnoGame.h,
-            // so this logic might need adjustment based on its re-introduction or alternative
-            // if (game.hasPendingSkipEffect())
-            // {
-            //     awaitingPlayerChange = true;
-            //     effectsApplied = false; // Reset for next transition
-            //     return true;
-            // }
         } catch (const Uno::GameStateException& e) {
             SetStatusMessage(TextFormat("Game State Error: %s", e.what()));
         }
